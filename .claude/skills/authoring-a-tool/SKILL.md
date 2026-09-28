@@ -252,3 +252,45 @@ The run reserves the table (`create`) or targets it (`update`); collect only fil
 7. `spec.py`: assemble `TOOL = Tool(name, action, description, default_script, default_input_column, build_manifest_fn, collect_fn, [add_run_args_fn, add_collect_args_fn])`.
 8. Match the neighbours for imports (`from prosapia.core import ...`, `from prosapia.utils import ...`), docstring style, and error-as-data reporting.
 9. Verify discovery and flags: `uv run sapia run <name> -h` and `uv run sapia collect <name> -h`. Sanity-check manifest/collect logic locally with `uv run`. Full runs execute on the HPC/SLURM cluster or on Modal.
+
+## Trap: never name a task-script variable after a bash special variable
+
+Cost four silent task failures on 2026-09-28.
+
+A `<tool>.sh` typically unpacks its manifest line into locals:
+
+```bash
+NAME=$(echo "$SAPIA_LINE" | cut -f1)
+GROUPS=$(echo "$SAPIA_LINE" | cut -f3)   # <-- BROKEN
+```
+
+`GROUPS` is **pre-set by bash** as an indexed array of the user's group IDs. Assigning a
+command substitution to it **fails with rc=1 and the assignment is silently discarded**:
+
+```
+$ bash -c 'GROUPS=$(echo hello); echo rc=$?; echo val=[$GROUPS]'
+rc=1
+val=[0]
+```
+
+Task scripts run under `set -euo pipefail`, so that rc=1 **kills the task instantly** —
+before any `echo`, before the worker is ever invoked. The result is the worst possible
+failure signature:
+
+- `.exit` is non-zero (so it is not mistaken for success), but
+- **`.out` and `.err` are both 0 bytes**, and
+- `modal app logs <app_id>` returns nothing.
+
+There is no diagnostic anywhere. The only way to find it is to re-run the task script by
+hand with `bash -x` under the real task environment.
+
+**Avoid these names for locals** (non-exhaustive): `GROUPS`, `UID`, `EUID`, `PPID`,
+`PIPESTATUS`, `SECONDS`, `RANDOM`, `LINENO`, `BASH_*`, `FUNCNAME`, `HOSTNAME`, `IFS`,
+`OPTARG`, `OPTIND`, `REPLY`, `SHLVL`, `PWD`, `OLDPWD`, `PATH`, `HOME`.
+
+Prefix manifest-field locals (`SEL_GROUPS`, `TOOL_UID`) or check first with
+`bash -c 'declare -p NAME' 2>/dev/null` — if it prints, pick another name.
+
+**Debugging rule this implies:** an `.exit` that is non-zero with *empty* `.out` **and**
+`.err` means the script died before its first statement produced output — look at variable
+assignments and the prelude, not at the worker.

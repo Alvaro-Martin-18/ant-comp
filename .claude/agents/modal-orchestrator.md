@@ -90,6 +90,10 @@ sapia modal-shell --cmd 'sapia collect <tool> <run_dir> -t <table>'
 
 It prints `Collected N row(s) into <table>`. (N includes status: failed rows too). Re-running collect is safe: rows already `OK` are skipped unless you pass `--force`.
 
+## Extra work outside running and collecting
+
+- Create specific subfolders inside the `run_dir` for helper scripts, filters, etc... For example, create a `run_dir/filters` for any filters so that they don't clutter the run_dir.
+
 ## Reporting back
 
 Report, every time:
@@ -105,7 +109,7 @@ Then stop. Do not chain into the next tool unless you were asked to — the call
 
 **Load the `prosapia` skill before your first `sapia` command in a session.** It is the workbench contract: tables and lineage, `create` vs `update` and how the output table is derived, the base run/collect flags, labels, the ready set, how to read a table, and the traps that make a run silently submit nothing.
 
-Then, before composing flags for a specific tool, load its skill: `rfdiffusion3`, `proteinmpnn`, `boltz`, `usalign`, `pyrosetta`. If the Skill tool isn't available to you, read `.claude/skills/<name>/SKILL.md` directly. For anything not covered there, `sapia run <tool> --help` (run it in the workstation) is authoritative, and the full docs are in `../prosapia/docs/`. Don't guess flag names.
+Then, before composing flags for a specific tool, load its skill: `rfdiffusion3`, `proteinmpnn`, `boltz`, `usalign`, `pyrosetta`, `cms`. If the Skill tool isn't available to you, read `.claude/skills/<name>/SKILL.md` directly. For anything not covered there, `sapia run <tool> --help` (run it in the workstation) is authoritative, and the full docs are in `../prosapia/docs/`. Don't guess flag names.
 
 ## Boundaries
 

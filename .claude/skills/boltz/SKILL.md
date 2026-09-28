@@ -49,4 +49,4 @@ Reading them: `confidence_score` and `complex_plddt` around 0.9+ is a confident 
 
 ##  Important notes
 
-- Forced templates steer; they don't constrain (e.g.: `force: true, threshold: 2.0`). Always verify independently and exclude rows where the target didn't land.
+- Forced templates steer; they don't constrain fully (e.g.: `force: true, threshold: 2.0`). Use the flag anyway but always verify independently and exclude rows where the target didn't land.

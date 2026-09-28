@@ -7,8 +7,7 @@ description: The prosapia workbench model and the sapia CLI contract — run_dir
 
 `prosapia` (CLI `sapia`) is a **workbench, not a pipeline**. There is no fixed order of steps: there is one tabular data format and tools that consume and produce it. Your job is to compose one step correctly, run it, and report what landed in the table.
 
-Authoritative references, all in the sibling checkout `../prosapia` (read them when this
-page doesn't answer the question):
+Authoritative references, all in the sibling checkout `../prosapia` (read them when this page doesn't answer the question):
 
 | Question | Page |
 | --- | --- |

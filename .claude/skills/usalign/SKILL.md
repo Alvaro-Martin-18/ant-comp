@@ -13,10 +13,6 @@ There is no `docs/tools/usalign.md`; the source is the reference
 (`src/prosapia/tools/usalign/` in `../prosapia`), and `sapia run usalign --help` is
 authoritative for flags. Everything below was read from that source.
 
-> **Not yet run in this project.** The rfd3 → ProteinMPNN → Boltz chain is validated; this
-> step is not. Treat the first run as a shakedown: a couple of designs, then check the
-> status column before scaling.
-
 ## It does not use `--input-column`
 
 Its `default_input_column` is the literal string `"not applicable"`. The manifest builder
