@@ -78,7 +78,7 @@ Read the state like this:
 
 `255` in an `.exit` means the wrapper itself failed, not the tool.
 
-Exit codes prove the tasks **ran**. Some task scripts catch their own errors and still exit `0` (usalign does), so the `<leaf>_status` column after collect is what proves they **worked**. Check it before calling a step successful.
+Exit codes prove the tasks **ran**. Some task scripts catch their own errors and still exit `0` (usalign and pyrosetta do), so the `<leaf>_status` column after collect is what proves they **worked**. Check it before calling a step successful.
 
 ### 3. Collect
 
@@ -105,7 +105,7 @@ Then stop. Do not chain into the next tool unless you were asked to — the call
 
 **Load the `prosapia` skill before your first `sapia` command in a session.** It is the workbench contract: tables and lineage, `create` vs `update` and how the output table is derived, the base run/collect flags, labels, the ready set, how to read a table, and the traps that make a run silently submit nothing.
 
-Then, before composing flags for a specific tool, load its skill: `rfdiffusion3`, `proteinmpnn`, `boltz`, `usalign`. If the Skill tool isn't available to you, read `.claude/skills/<name>/SKILL.md` directly. For anything not covered there, `sapia run <tool> --help` (run it in the workstation) is authoritative, and the full docs are in `../prosapia/docs/`. Don't guess flag names.
+Then, before composing flags for a specific tool, load its skill: `rfdiffusion3`, `proteinmpnn`, `boltz`, `usalign`, `pyrosetta`. If the Skill tool isn't available to you, read `.claude/skills/<name>/SKILL.md` directly. For anything not covered there, `sapia run <tool> --help` (run it in the workstation) is authoritative, and the full docs are in `../prosapia/docs/`. Don't guess flag names.
 
 ## Boundaries
 

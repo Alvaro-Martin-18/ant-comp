@@ -5,11 +5,12 @@ description: How to run the proteinmpnn sequence-design tool on Modal — flags,
 
 # proteinmpnn
 
-Designs sequences for input backbones. **`action: create`** — mints a child table, one row
-per designed sequence.
+Designs sequences for input backbones. **`action: create`** — mints a child table, one row per designed sequence.
 
 Full reference: `docs/tools/proteinmpnn.md` in the prosapia repo, and
 `sapia run proteinmpnn --help`.
+
+IMPORTANT: prosapia's bundled proteinmpnn is a wrapper of the original. Check the github repo for all information: https://github.com/dauparas/ProteinMPNN/tree/main
 
 ## Verified invocation
 

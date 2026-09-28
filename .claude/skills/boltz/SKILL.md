@@ -10,6 +10,8 @@ reads, in place. It does **not** create a table, and `-t` is required.
 
 There is no dedicated doc page; `sapia run boltz --help` is authoritative.
 
+IMPORTANT: prosapia's bundled boltz is a wrapper of the original. Check the github repo for all information: https://github.com/jwohlwend/boltz/tree/main/docs
+
 ## Verified invocation
 
 ```bash
@@ -37,25 +39,14 @@ Default Modal resources: **A10**, 24 CPU, 64 GiB, 8 h timeout.
 
 ## The weight cache
 
-Weights and the CCD download on first use into the Volume named by
-`SAPIA_MODAL_VOLUME_BOLTZ_CACHE`, mounted at `/boltz_cache`. It holds `boltz2_conf.ckpt`,
-`boltz2_aff.ckpt`, `mols/` and `mols.tar`. Budget extra time on the very first run of a
-fresh cache; never delete that Volume to "clean up".
-
-## Python version
-
-Boltz needs Python < 3.13, so its image pins **3.12** while the workstation runs something
-newer. That is expected and fine — Modal imports a stdlib-only task entrypoint, so tool
-images pick their own Python. If a build ever fails compiling scipy from source, that is
-the symptom of a tool image being forced onto too new a Python.
+Weights and the CCD download on first use into the Volume named by `SAPIA_MODAL_VOLUME_BOLTZ_CACHE`, mounted at `/boltz_cache`. It holds `boltz2_conf.ckpt`, `boltz2_aff.ckpt`, `mols/` and `mols.tar`. Budget extra time on the very first run of a fresh cache; never delete that Volume to "clean up".
 
 ## What it collects
 
-Columns added to the **same** table (leaf-prefixed `boltz_`): `confidence_score`, `ptm`,
-`iptm`, `ligand_iptm`, `protein_iptm`, `complex_plddt`, `complex_iplddt`, `complex_pde`,
-`complex_ipde`, plus `_status` and `_path` (the predicted structure).
+Columns added to the **same** table (leaf-prefixed `boltz_`): `confidence_score`, `ptm`, `iptm`, `ligand_iptm`, `protein_iptm`, `complex_plddt`, `complex_iplddt`, `complex_pde`, `complex_ipde`, plus `_status` and `_path` (the predicted structure).
 
-Reading them: `confidence_score` and `complex_plddt` around 0.9+ is a confident prediction
-for a de-novo monomer; `ptm` tracks global fold confidence. High confidence means the
-predictor believes the fold — it is **not** proof the sequence folds to the backbone it was
-designed for. For that, compare the prediction back to its parent backbone with `usalign`.
+Reading them: `confidence_score` and `complex_plddt` around 0.9+ is a confident prediction for a de-novo monomer; `ptm` tracks global fold confidence. High confidence means the predictor believes the fold — it is **not** proof the sequence folds to the backbone it was designed for. For that, compare the prediction back to its parent backbone with `usalign`.
+
+##  Important notes
+
+- Forced templates steer; they don't constrain (e.g.: `force: true, threshold: 2.0`). Always verify independently and exclude rows where the target didn't land.

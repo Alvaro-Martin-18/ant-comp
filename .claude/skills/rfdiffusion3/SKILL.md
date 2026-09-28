@@ -10,6 +10,8 @@ Generates protein backbones. **`action: create`** — always mints a new table.
 Full reference: `docs/tools/rfdiffusion3.md` in the prosapia repo, and
 `sapia run rfdiffusion3 --help` (authoritative for flags).
 
+IMPORTANT: prosapia's bundled rfdiffusion3 is a wrapper of the original. Check the github repo for all information: https://github.com/RosettaCommons/foundry/tree/production/models/rfd3/docs
+
 ## Two shapes of run
 
 - **Root run (no `-t`)** — starts a fresh lineage in `table0`. One design group, named
@@ -46,6 +48,78 @@ No `-t`, no contig, no input. Produced 5 backbones in `table0` in ~3 min on an A
 | `--extra-spec` | none | YAML/JSON of extra rfd3 spec fields merged into every design. |
 
 Default Modal resources: **A10**, 8 CPU, 32 GiB, 4 h timeout. Override with `--modal-gpu`.
+
+## Binder design: hotspots and the two-target contig
+
+There is no binder flag. A binder job is a **root run** that holds the target chains as
+motif and appends one designed chain, with hotspots supplied through `--extra-spec`.
+
+```bash
+sapia run rfdiffusion3 <run_dir> \
+    --input-pdb target/7ojg_AB.pdb \
+    --contigs 'A18-155,/0,B18-155,/0,70-100' \
+    --extra-spec target/hotspots.yaml \
+    --num-designs 2 --set n_batches=4 --modal-gpu A100
+```
+
+Verified: 8 backbones, 3 chains each (`A` 138 / `B` 138 / **`C` = the binder**), ~4 min on
+an A100 for a 276-residue motif plus a ~90-residue binder.
+
+### `select_hotspots` — the syntax
+
+Not documented anywhere in prosapia (`grep hotspot docs/` returns nothing), and **classic
+RFdiffusion's `ppi.hotspot_res=[A30,A33]` list form does not carry over.** In rfd3 the
+field is typed `Optional[InputSelection]` on `DesignInputSpecification`, and
+`InputSelection.from_any` accepts only **a contig-style string, a bool, or a dict** — a
+list raises `ValueError: Cannot convert <class 'list'> to InputSelection`.
+
+```yaml
+# hotspots.yaml — a whole-residue selection (ALL atoms of each residue)
+select_hotspots: "A47,A123,B42,B155"     # ranges work too: "A47-49"
+infer_ori_strategy: hotspots             # places the origin token 12 Å out
+                                         # along the outward normal from the hotspot COM
+```
+
+```yaml
+# atom-level form: the dict picks which atoms carry the annotation
+select_hotspots:
+  A47: TIP        # sidechain tip atoms
+  B42: BKBN       # backbone
+  B155: [CA, CB]  # explicit atom names
+```
+
+That string-vs-dict choice is exactly what the field's "atom-level or token-level"
+docstring refers to.
+
+**Specify few hotspots.** rfd3 was trained with hotspots present in 75% of PPI examples,
+showing only a random subset of up to **20%** of the true hotspot atoms (ground truth =
+target atoms within 4.5 Å of the binder). A dense patch is off-distribution. It is real
+conditioning, not a no-op: the shipped checkpoint carries trained
+`token_initializer.…is_atom_level_hotspot.weight` tensors.
+
+Constraints worth knowing:
+
+- Hotspots need `input` set in the same spec, and must lie **inside the contig's motif
+  ranges** — annotations on residues outside the contig never enter the built structure.
+- Chain/residue ids are the **input file's own numbering**, not renumbered.
+- prosapia resolves `{expr}` in every `--extra-spec` string, so avoid literal braces.
+- Setting `contig`/`length`/`input`/`symmetry`/`partial_t` in both a flag and
+  `--extra-spec` is a `SpecConfigError`. The task script prevalidates, so a bad spec fails
+  fast and cheaply — let it, rather than building a probe container to check.
+
+### Contig traps for a two-chain target
+
+- **Use `/0` for the chain break.** `elif part == "/0"` is the only literal the parser
+  recognises. The colon form `A18-20:B18-20` does **not** error — it silently matches the
+  prefix only and **drops chain B**, designing against half the target.
+- **Do not pass `--length` with a binder contig.** It is the *total*, and
+  `length_min -= num_motif_residues`, so `--length 400` against a 276-residue motif demands
+  a 124-residue binder and fails validation. Let the contig's `70-100` govern.
+- **The designed length is drawn once per spec build**, so `--num-designs 8` gives 8
+  backbones of one length. `--set n_batches=K` gives K fresh draws
+  (total = `n_batches × num_designs`); the value lands in `extra["sampled_contig"]`.
+- rfd3 **renumbers every output chain from 1**, so a target numbered 18–155 comes back as
+  1–138. Any downstream step that names target residues needs that offset.
 
 ## Gotchas
 

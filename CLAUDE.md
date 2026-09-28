@@ -66,7 +66,7 @@ main session = thinker              (claude --agent thinker; Opus)
 - **`modal-orchestrator`** (`.claude/agents/modal-orchestrator.md`) — the only thing that
   executes. Knows the Modal mechanics and the wait loop. Reports back and stops; it does
   not chain into the next tool on its own.
-- **Per-tool skills** (`.claude/skills/{rfdiffusion3,proteinmpnn,boltz}/SKILL.md`) — flags,
+- **Per-tool skills** (`.claude/skills/<tool>/SKILL.md`) — flags,
   verified invocations, collected columns and the specific traps of each tool. Loaded by
   the orchestrator instead of re-reading the full docs.
 
@@ -133,7 +133,7 @@ a detail.
 | Variable | Value here | Meaning |
 | --- | --- | --- |
 | `SAPIA_EXECUTOR` | `modal` | Default executor for `sapia run`. |
-| `SAPIA_MODAL_RUNS_VOLUME` | `sapia-runs-test` | The runs Volume. **Required.** Created on first use. |
+| `SAPIA_MODAL_RUNS_VOLUME` | `sapia-runs` | The runs Volume. **Required.** Created on first use. |
 | `SAPIA_MODAL_VOLUME_RFD3_CKPT` | `rfd3-checkpoints` | rfd3 checkpoints, mounted at `/checkpoints`. |
 | `SAPIA_MODAL_VOLUME_BOLTZ_CACHE` | `boltz-cache` | Boltz weights + CCD, mounted at `/boltz_cache`. |
 
@@ -149,13 +149,14 @@ populated by hand (see below); `boltz-cache` re-downloads on first use.
 ## Validated pipeline
 
 The full chain has been run end to end on Modal. Reference run: `outputs/20260927_211428_rfd3_denovo`
-on `sapia-runs-test`.
+on `sapia-runs-test` (the previous test Volume; the current one is `sapia-runs`).
 
 | Step | Command | Result |
 | --- | --- | --- |
 | rfd3 de novo | `sapia run rfdiffusion3 <run_dir> --length 80-120 --num-designs 5` | 5 backbones → `table0`, ~3 min |
 | ProteinMPNN | `sapia run proteinmpnn <run_dir> -t table0 -i rfdiffusion3_path --num-seq-per-target 2` | 10 sequences → `table1`, ~1.5 min |
 | Boltz | `sapia run boltz <run_dir> -t table1` | 10 predictions annotated onto `table1`, ~16 min (incl. first weight download) |
+| PyRosetta | `sapia run pyrosetta <run_dir> -t table1` | FastRelax (1 cycle) + ref2015 metrics onto `table1`, ~1.5 min for 2 designs (`outputs/20260928_113443_pyrosetta_test` on `sapia-runs`) |
 
 All 10 Boltz predictions came back confident (confidence 0.91–0.97, pLDDT 0.93–0.97). Note
 that high confidence is **not** proof the sequence folds to its designed backbone — the real
