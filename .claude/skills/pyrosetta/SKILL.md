@@ -9,9 +9,10 @@ Scores one structure per design with [PyRosetta](https://www.pyrosetta.org/) (re
 default), after an optional FastRelax, and writes Rosetta energy metrics as columns.
 **`action: update`** — annotates the table it reads, in place. `-t` is required.
 
-Source: `src/prosapia/tools/pyrosetta/` in `../prosapia` (`run_pyrosetta.py`,
-`pyrosetta_worker.py`, `collect_pyrosetta.py`). `sapia run pyrosetta --help` is
-authoritative for flags.
+Source: `prosapia/tools/pyrosetta/` in the installed package
+(`.venv/lib/python<version>/site-packages/`), or `src/prosapia/tools/pyrosetta/` checkout
+ — `run_pyrosetta.py`, `pyrosetta_worker.py`, `collect_pyrosetta.py`. 
+`sapia run pyrosetta --help` is authoritative for flags.
 
 > **Validated end to end on Modal.** `outputs/20260928_113443_pyrosetta_test` on
 > `sapia-runs`: rfd3 → ProteinMPNN → Boltz → pyrosetta (defaults) scored 2 designs, both

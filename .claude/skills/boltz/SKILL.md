@@ -108,7 +108,7 @@ server, so ask before enabling.)
 
 ## Templates
 
-**Do not hand-write the CIF.** `tools/_utils/boltz_template.py` builds it and the matching YAML,
+**Do not hand-write the CIF.** `utils/boltz_template.py` builds it and the matching YAML,
 and verifies every trap below by re-reading the written file. It is not a sapia tool — run it with
 the workstation's python:
 

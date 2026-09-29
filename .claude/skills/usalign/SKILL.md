@@ -10,7 +10,8 @@ writes TM-score / RMSD columns. **`action: update`** — annotates the table it 
 place. `-t` is required.
 
 There is no `docs/tools/usalign.md`; the source is the reference
-(`src/prosapia/tools/usalign/` in `../prosapia`), and `sapia run usalign --help` is
+(`.venv/lib/python3.13/site-packages/prosapia/tools/usalign/`, or `src/prosapia/tools/usalign/`
+in a `../prosapia` checkout), and `sapia run usalign --help` is
 authoritative for flags. Everything below was read from that source.
 
 ## It does not use `--input-column`

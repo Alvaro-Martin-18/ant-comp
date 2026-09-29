@@ -13,7 +13,7 @@ To define how tools interact with the data interface, prosapia establishes the f
 
 2. When a protein diverges in sequence or structure, it is no longer the same protein but a child of a parent — therefore it needs a new table.
 
-Authoritative references, all in the sibling checkout `../prosapia` (read them when this page doesn't answer the question):
+Authoritative references: **The installed package does not ship `docs/`** — only `src/`. Query https://github.com/jlmoraleshellin/prosapia/tree/dev (dev branch specifically) plus `sapia run <tool> --help` for source of truth docs.
 
 | Question | Page |
 | --- | --- |

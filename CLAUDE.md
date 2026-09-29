@@ -1,11 +1,22 @@
 # What this project is
 
 A **protein-design workspace** built on [`prosapia`](https://github.com/jlmoraleshellin/prosapia)
-(CLI: `sapia`), running entirely on **Modal**. No design software is installed locally —
-every tool runs in its own Modal container, and all data lives on a Modal Volume.
+(CLI: `sapia`), running on one of **two backends**: **Modal** (a container per task) or the
+**VIB DataCore** (SLURM array jobs over ssh). No design software is installed locally —
+every tool runs remotely, and the data stays there too, on a Modal Volume or on cluster
+group storage.
 
-The intended way of working: **Claude drives the campaign, Modal does the compute.** Claude
-never holds the data; it submits steps, waits for them, collects them, and reads the tables.
+The intended way of working: **Claude drives the campaign, the backend does the compute.**
+Claude never holds the data; it submits steps, waits for them, collects them, and reads the
+tables.
+
+The science is identical either way — same CLI, same tables, same lineage, same skills.
+What differs is the execution machinery, and one thing that will change plans: **the six
+custom tools in `tools/` (`atomium`, `bindcraft2`, `chainsel`, `cms`, `mkcomplex`,
+`ringfit`) exist on Modal only.** They ship Modal images, not cluster activation scripts, so
+vib registers the 11 built-ins and nothing else (verified with `sapia run --help` on both).
+A chain needing `mkcomplex`/`chainsel`/`cms` must run on Modal. **A single `run_dir` lives
+on one backend** — the Volume and the cluster filesystem are separate worlds.
 
 ## prosapia in one page
 
@@ -54,25 +65,32 @@ Claude Code subagents **cannot spawn further subagents**, so the setup is two la
 three:
 
 ```
-main session = thinker              (claude --agent thinker; Opus)
-   └─ modal-orchestrator subagent   (Sonnet; Bash/Read/Skill)
+main session = thinker                    (claude --agent thinker; Opus)
+   ├─ modal-orchestrator subagent         (Sonnet; Bash/Read/Skill)   → Modal
+   └─ vib-orchestrator subagent           (Sonnet; Bash/Read/Skill)   → VIB DataCore
          └─ reads .claude/skills/<tool>/SKILL.md on demand
 ```
 
 - **`thinker`** (`.claude/agents/thinker.md`) — owns the scientific problem: goals, what to
-  try next, reading result tables, what to keep. **Never runs `sapia` itself.** Delegates
-  intent ("20 backbones, length 90–110") and requires the run_dir, table, row count and
-  failures back.
-- **`modal-orchestrator`** (`.claude/agents/modal-orchestrator.md`) — the only thing that
-  executes. Knows the Modal mechanics and the wait loop. Reports back and stops; it does
-  not chain into the next tool on its own.
+  try next, reading result tables, what to keep. **Never runs `sapia`, `modal` or `ssh`
+  itself.** Delegates intent ("20 backbones, length 90–110") and requires the run_dir,
+  table, row count and failures back. **Asks the user which backend** at the start of a
+  session if they haven't said, then uses that one orchestrator throughout.
+- **`modal-orchestrator`** (`.claude/agents/modal-orchestrator.md`) — executes on Modal:
+  the workstation, tool images, the `.exit` wait loop.
+- **`vib-orchestrator`** (`.claude/agents/vib-orchestrator.md`) — executes on the VIB
+  DataCore: ssh to the login node, `sbatch`, partitions, the `squeue`/`sacct` wait loop.
+- Both orchestrators report back and **stop**; neither chains into the next tool on its own.
 - **Per-tool skills** (`.claude/skills/<tool>/SKILL.md`) — flags,
   verified invocations, collected columns and the specific traps of each tool. Loaded by
-  the orchestrator instead of re-reading the full docs.
+  the orchestrator instead of re-reading the full docs. **They were written against
+  Modal**: the tool flags, input/output columns and scientific traps hold everywhere, but
+  anything about Volumes, images, `modal-shell`, `--gpu-type` or `.exit` files does not
+  apply on vib.
 
 Start a campaign with `claude --agent thinker`.
 
-## The Modal execution model
+## Execution model A: Modal
 
 `run_dir`s live **only on a Modal Volume**, mounted at `/runs`. `sapia` runs next to it in
 a small container, the **workstation**, not on this machine:
@@ -114,28 +132,117 @@ workstation call costs 5–10 s of cold start).
 `modal` CLI commands (`app list`, `app logs`, `volume ls`) run **locally**, not in the
 workstation. Set `NO_COLOR=1` before parsing their output — ANSI codes break JSON parsing.
 
+## Execution model B: the VIB DataCore (SLURM)
+
+No containers here. `sapia` lives in a shared env on the cluster, runs on the **login
+node**, and submits SLURM array jobs; each tool's environment comes from an activation
+script. Everything goes over one ssh hop, configured by four variables in **this repo's
+`.env`** (read locally by the orchestrator, never by prosapia): `SAPIA_VIB_HOST`,
+`SAPIA_VIB_ENV_DIR`, `SAPIA_VIB_ACTIVATE`, `SAPIA_VIB_PROJECT_DIR`.
+
+```bash
+set -a; . ./.env; set +a
+timeout 120 ssh -o BatchMode=yes -o ConnectTimeout=20 -x "$SAPIA_VIB_HOST" \
+  "cd $SAPIA_VIB_ENV_DIR && $SAPIA_VIB_ACTIVATE && <command>"
+```
+
+Non-negotiables, each learned the hard way:
+
+- **Always `cd` to `$SAPIA_VIB_ENV_DIR` first.** A SLURM task starts in the submit
+  directory and its prelude sources `.env` relative to it. Submit from anywhere else and
+  the CLI still works, but every task dies with
+  `sapia: set SAPIA_ACTIVATE_<TOOL> in your .env`.
+- **Run_dirs are absolute**, minted with `--base "$SAPIA_VIB_PROJECT_DIR/outputs"`. Group
+  storage is shared by login and compute nodes, so an absolute path resolves wherever a
+  task lands. Still never `cd` into a run_dir.
+- **GPU jobs need `--partitions`.** The default partition `gp_64C_128T_512GB` has no GPUs,
+  so a GPU task submitted without one never runs. Check `sinfo -o '%P %G'` and `sinfo -s`;
+  don't pick a partition unilaterally for a large batch. `--gpu-type` is Modal-only.
+- **Stay under half a partition's GPUs.** Each holds 4–16 in total across its nodes;
+  `--max-gpu-fraction` defaults to `0.5` and caps concurrency accordingly. Leave it there
+  unless the caller has a reason — the capacity is the lab's, not ours.
+- **Prefer a `_co_pi` partition** when one exists for that GPU; it is this group's
+  entitlement. Plain `gpu_h100_*` / `gpu_b300_*` belong to others even when idle. a100,
+  l40s, `gpu_ds` and `gpu_short` have no `_co_pi` form and are fine as they are.
+- **Every `sapia run` needs `-a $SAPIA_VIB_ACCOUNT`.** prosapia omits `--account` from the
+  `sbatch` line when unset, so the failure surfaces at the scheduler, not in `sapia`. If
+  the variable is empty, ask the user — never submit without it or guess a value.
+- **Certificates expire.** Auth is a short-lived SSH cert from a Smallstep CA via an Azure
+  AD browser sign-in. If an ssh call hangs or says `Permission denied`, **stop and ask the
+  user to sign in** — never retry in a loop. Always wrap ssh in `timeout`.
+- **The login node and filesystem are shared with the lab.** `new_run`, `run`, `collect`
+  and read-only inspection there are fine; never run a tool's compute on it. Never touch
+  another user's directories, the shared `envs/`, or the cluster's `.env` / `activation/`.
+- **`-g 0` for CPU-only tools**, same as Modal.
+
+### Task status: the SLURM loop
+
+**There are no `.exit` files.** The scheduler is the source of truth; the log dir
+(`<script>_<jobid>_<taskidx>.out` / `.err`) is the evidence. Record every job ID —
+`--partitions` or >1000 tasks produce several arrays.
+
+```bash
+squeue -h -j <jobid> -o '%i %T %R'
+sacct -n -P -X -j <jobid> --format=JobID,State,ExitCode,Elapsed,MaxRSS
+```
+
+| State | Meaning |
+| --- | --- |
+| `PENDING` | queued; `%R` gives the reason. `ReqNodeNotAvail` / `PartitionConfig` will never start — stop and report |
+| `RUNNING` | keep polling |
+| `COMPLETED` `0:0` | done — collect only when **every** array task is here |
+| `FAILED` | read that task's `.err` |
+| `TIMEOUT`, `OUT_OF_MEMORY`, `CANCELLED` | killed; report `Elapsed`/`MaxRSS` |
+
+The loop is **submit → poll `squeue`/`sacct` → check states → collect**. Poll every
+60–120 s; queue waits run from minutes to hours, and each call is a fresh ssh connection.
+
+A task that fails with **empty `.out` and `.err`** died before its first statement — look
+at the activation script and the prelude, not the tool.
+
 ## Local configuration
 
-`prosapia` is installed **editable from a sibling checkout**, so edits to the library take
-effect immediately:
+`prosapia` is installed **from GitHub, branch `dev`**, pinned to a commit in `uv.lock`:
 
 ```toml
 [tool.uv.sources]
-prosapia = { path = "../prosapia", editable = true }
+prosapia = { git = "https://github.com/jlmoraleshellin/prosapia", branch = "dev" }
 ```
 
-Currently `../prosapia` on branch `new-scheduler`. The Modal executor and the workstation
-are new work on that branch — expect it to keep moving, and read the code before trusting
-a detail.
+Consequences, both of which matter:
 
-`.env` (no secrets; Modal auth lives in `~/.modal.toml`):
+- **The install is not editable.** Edits in a local `../prosapia` checkout have **no effect**
+  on what runs — neither locally nor in the workstation image, which mounts the installed
+  package from `.venv/lib/python3.13/site-packages/prosapia/`. To pick up new commits on
+  `dev`: `uv lock --upgrade-package prosapia && uv sync`. To develop the library, switch the
+  source back to `{ path = "../prosapia", editable = true }` for the duration.
+- **`docs/` is not shipped.** The wheel carries `src/prosapia/` only. The library *source* is
+  therefore readable at `.venv/lib/python3.13/site-packages/prosapia/`, but the prose docs
+  that several skills cite (`docs/running-on-modal.md`, `docs/lineage-and-tables.md`, …) exist
+  only in a checkout of the repo. Keeping a sibling `../prosapia` clone on `dev` is still
+  worthwhile for that reason alone — it is just no longer the dependency.
+
+This pin governs **Modal only**. The cluster env is installed and updated separately by
+whoever maintains it; a `uv.lock` bump here does not move it, and the two can drift.
+
+`dev` keeps moving. Read the source before trusting a detail, and prefer
+`sapia run <tool> --help` (in the workstation, or on vib) over memory.
+
+`.env` (no secrets; Modal auth lives in `~/.modal.toml`, vib auth in a short-lived SSH
+cert). Note `SAPIA_EXECUTOR` is **not** set here: the Modal workstation exports
+`SAPIA_EXECUTOR=modal` itself, and the cluster's own `.env` sets `slurm`.
 
 | Variable | Value here | Meaning |
 | --- | --- | --- |
-| `SAPIA_EXECUTOR` | `modal` | Default executor for `sapia run`. |
 | `SAPIA_MODAL_RUNS_VOLUME` | `sapia-runs` | The runs Volume. **Required.** Created on first use. |
 | `SAPIA_MODAL_VOLUME_RFD3_CKPT` | `rfd3-checkpoints` | rfd3 checkpoints, mounted at `/checkpoints`. |
 | `SAPIA_MODAL_VOLUME_BOLTZ_CACHE` | `boltz-cache` | Boltz weights + CCD, mounted at `/boltz_cache`. |
+| `SAPIA_MODAL_VOLUME_BINDCRAFT_CACHE` | `bindcraft-cache` | BindCraft2's AlphaFold params (~5.3 GB). |
+| `SAPIA_VIB_HOST` | `vib` | ssh alias for the DataCore login node (`~/.ssh/config`). |
+| `SAPIA_VIB_ENV_DIR` | `/data/groups/csb/…/prosapia-workstation-dev` | Where prosapia is installed on the cluster. Every remote command runs from here. |
+| `SAPIA_VIB_ACTIVATE` | `source .venv/bin/activate` | Puts `sapia` on PATH, after cd-ing there. |
+| `SAPIA_VIB_PROJECT_DIR` | **empty — per user** | Where run_dirs go. Blank by design; each person sets their own before the first vib run. |
+| `SAPIA_VIB_ACCOUNT` | **empty — per user** | SLURM account for `-a`. Blank by design; required on every vib run. |
 
 The weight Volumes were deliberately renamed **without** a `sapia-` prefix so teammates who
 don't use prosapia can share them. Note that prosapia's own defaults are still
@@ -148,8 +255,11 @@ populated by hand (see below); `boltz-cache` re-downloads on first use.
 
 ## Validated pipeline
 
-The full chain has been run end to end on Modal. Reference run: `outputs/20260927_211428_rfd3_denovo`
-on `sapia-runs-test` (the previous test Volume; the current one is `sapia-runs`).
+The full chain has been run end to end **on Modal**. Reference run: `outputs/20260927_211428_rfd3_denovo`
+on `sapia-runs-test` (the previous test Volume; the current one is `sapia-runs`). The
+timings below are Modal's; on vib, add the queue wait and drop the image-build time.
+**The chain has not yet been validated end to end on vib** — treat a first run there as a
+test, and start small.
 
 | Step | Command | Result |
 | --- | --- | --- |
@@ -178,6 +288,13 @@ test is self-consistency: compare each prediction back to its parent backbone wi
 - **Untested:** polling from inside a single long-running workstation container (unclear
   whether its Volume mount refreshes to show task commits). The orchestrator therefore uses
   repeated short `modal-shell` calls, which is what was actually verified.
+- **The custom tools are Modal-only** (see the top of this file). Giving one to vib means
+  writing an activation script there and a `SAPIA_ACTIVATE_<NAME>` entry in the cluster's
+  `.env` — which lives in the shared env dir and is not ours to edit unilaterally.
+  `tool-creator` scaffolds a `modal_image.py`, not an activation script.
+- **Nothing syncs the two backends.** No command moves a `run_dir` between the Modal Volume
+  and cluster storage; a campaign started on one finishes on that one.
+- **Untested on vib:** the full chain, and every custom tool by definition.
 
 ## Network note (imec)
 

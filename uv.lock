@@ -162,7 +162,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "prosapia", extras = ["modal"], editable = "../prosapia" }]
+requires-dist = [{ name = "prosapia", extras = ["modal"], git = "https://github.com/jlmoraleshellin/prosapia?branch=dev" }]
 
 [[package]]
 name = "anyio"
@@ -1031,7 +1031,8 @@ wheels = [
 
 [[package]]
 name = "prosapia"
-source = { editable = "../prosapia" }
+version = "0.1.0.post18.dev0+230ea04"
+source = { git = "https://github.com/jlmoraleshellin/prosapia?branch=dev#230ea048dbcaa50f9db49098ca79cd905d3f5955" }
 dependencies = [
     { name = "argcomplete" },
     { name = "gemmi" },
@@ -1043,23 +1044,6 @@ dependencies = [
 [package.optional-dependencies]
 modal = [
     { name = "modal" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "argcomplete", specifier = ">=3.7.2" },
-    { name = "gemmi", specifier = ">=0.7.5,<0.8" },
-    { name = "modal", marker = "extra == 'modal'", specifier = ">=1.0" },
-    { name = "pandas", specifier = ">=3.0.2,<4" },
-    { name = "python-dotenv", specifier = ">=1.2.3" },
-    { name = "pyyaml", specifier = ">=6.0.3" },
-]
-provides-extras = ["modal"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "ruff", specifier = ">=0.16.4" },
 ]
 
 [[package]]

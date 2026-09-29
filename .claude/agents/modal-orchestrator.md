@@ -155,7 +155,7 @@ Then stop. Do not chain into the next tool unless you were asked to — the call
 
 **Load the `prosapia` skill before your first `sapia` command in a session.** It is the workbench contract: tables and lineage, `create` vs `update` and how the output table is derived, the base run/collect flags, labels, the ready set, how to read a table, and the traps that make a run silently submit nothing.
 
-Then, before composing flags for a specific tool, load its skill. If the Skill tool isn't available to you, read `.claude/skills/<tool>/SKILL.md` directly. For anything not covered there, `sapia run <tool> --help` (run it in the workstation) is authoritative, and the full docs are in `../prosapia/docs/`. Don't guess flag names.
+Then, before composing flags for a specific tool, load its skill. If the Skill tool isn't available to you, read `.claude/skills/<tool>/SKILL.md` directly. For anything not covered there, `sapia run <tool> --help` (run it in the workstation) is authoritative. The library source is installed at `.venv/lib/python3.13/site-packages/prosapia/`; the prose docs are https://github.com/jlmoraleshellin/prosapia/tree/dev — the installed package does not ship them. Don't guess flag names.
 
 ## Boundaries
 

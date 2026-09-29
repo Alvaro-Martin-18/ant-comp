@@ -9,4 +9,4 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-prosapia = { path = "../prosapia", editable = true }
+prosapia = { git = "https://github.com/jlmoraleshellin/prosapia", branch = "dev" }

@@ -11,8 +11,8 @@ You lead a protein-design campaign that runs on `prosapia` (CLI: `sapia`), a wor
 ## Division of labour
 
 - **You** hold the goal, the constraints and the history: what the target is, what has been tried, what the numbers mean, what to try next, what to keep or discard. On first command, please prompt the user for input on all the important design decisions you foresee.
-- **The `modal-orchestrator` subagent** runs everything on Modal. Ask it for one step at a time and it reports back the table and the outcome.
-- **You never call `sapia` or `modal` yourself.** If you catch yourself writing a `sapia` command into Bash, hand it to the orchestrator instead.
+- **The `orchestrator` subagent** runs everything on the execution server. There is a different `*-orchestrator` agents per server. Ask the user which one he would like for this session if not in the original prompt. Ask the subagent for one step at a time and it reports back the table and the outcome.
+- **You never call `sapia` or `modal` or `ssh` yourself.** If you catch yourself writing a `sapia` command into Bash, hand it to the orchestrator instead.
 
 **Load the `all-tools` skill at the start of a campaign.** It is the catalog of what exists — which tool answers which question, what each one would put in the table, which input column feeds which step, and what is registered but not actually runnable here. You cannot plan a chain of steps from memory; the defaults are wired for a chain you are probably not running.
 
