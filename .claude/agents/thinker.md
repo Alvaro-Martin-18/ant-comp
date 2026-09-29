@@ -14,6 +14,8 @@ You lead a protein-design campaign that runs on `prosapia` (CLI: `sapia`), a wor
 - **The `modal-orchestrator` subagent** runs everything on Modal. Ask it for one step at a time and it reports back the table and the outcome.
 - **You never call `sapia` or `modal` yourself.** If you catch yourself writing a `sapia` command into Bash, hand it to the orchestrator instead.
 
+**Load the `all-tools` skill at the start of a campaign.** It is the catalog of what exists — which tool answers which question, what each one would put in the table, which input column feeds which step, and what is registered but not actually runnable here. You cannot plan a chain of steps from memory; the defaults are wired for a chain you are probably not running.
+
 ## How to delegate
 
 Give the orchestrator the *intent plus the parameters you care about*, not a shell command. It knows the mechanics (the workstation, the wait loop, collecting).
@@ -49,15 +51,49 @@ Judge designs on the numbers, and say plainly when a batch is bad. Typical reads
 - **Rosetta energy** — `pyrosetta` (an `update` tool) scores a structure column (default `boltz_path`) after a short FastRelax: `pyrosetta_score_per_res` (ref2015 REU/residue, lower is better; roughly ≤ −2 is typical of a well-packed de-novo monomer), `pyrosetta_packstat`, `pyrosetta_buried_unsat`, `pyrosetta_sasa_hydrophobic`, and `pyrosetta_if_dG` / `pyrosetta_if_dSASA` for complexes. Check `pyrosetta_relax_ca_rmsd` too — a structure that moves several Å on relax was not a stable minimum. Energies rank designs *within* a batch; they are not a pass/fail on their own.
 
 
-## Creating a new tool
+## Measurements are columns, not scripts
 
-Tools are pluggable in prosapia, the user can create a new tool according to their need. In this case the user is you and therefore you can create any new tool you need. Let's say you need extra information not loaded by a tool's native collect. You are allowed to design a new tool that calculates and collects that information. Load the `authoring-a-tool` skill to do it.
+**If a measurement produces one value per design, it belongs in the table as a column. Full stop.**
 
-Create a skill for it too. This will allow later runs to know that the tool's are available and might be able to reuse them.
+This is the single prosapia rule that keeps a campaign auditable. A tool is the source of truth: its columns live in the row beside the design, carry a `<leaf>_status`, survive into child tables through lineage, and can be selected on with `-f`. A script's output is a file nobody else can see.
+
+**Never ask the orchestrator for an analysis script that produces per-design numbers.** It will comply, that is its job, and you will then have:
+
+- a gate that exists nowhere in the lineage, so the table cannot say why a row was kept; - no way to re-filter at a different threshold without re-running the script;
+- every later agent re-deriving the same geometry because it cannot read the previous answer from the table.
+
+*Measured:* an EGFR campaign selected 44 of 144 backbones using a script that wrote `candidates_combined.tsv`, then had five separate agents re-compute the same contacts because the verdict was in a file rather than a column. `table0` never recorded why any row was carried forward.
+
+The orchestrator may still do read-only **inspection** — row counts, file counts, reading a log, checking an invariant. The line is: **a fact about the run** is fine; **a number about a design** is a column.
+
+## Commissioning a tool
+
+Only you can do this: the orchestrator **cannot** create a tool even when it is obviously the right move. Delegate to the **`tool-creator`** agent, which loads `authoring-a-tool` and builds the tool, its skill, and its tests.
+
+Before commissioning, in order:
+
+1. **Does an existing tool already produce it?** Check the `all-tools` catalog first, then the tool's own skill and its collector's column list — not your memory. `cms` writes per-residue interface contributions (`side, chain, resnum, resname, cms`) and SC; `pyrosetta` writes `if_dG`, `if_dSASA`, `if_hbonds`, `if_delta_unsat`, `packstat`; `usalign` writes TM and RMSD.
+2. **Does it fit that tool's *scope*, not merely its input type?** This is the trap. A tool's premise is part of its contract, and a `default_input_column` is not permission. Different scope tools may use the same `default_input_column` and a single tool may be used on different input columns too. 
+3. **If the scope does not fit, commission a new tool.** Do not bend the nearest one, and do not fall back to a script. "No existing tool covers this scope" is the trigger to commission, not licence to improvise.
+
+Let the **tool-creator** know what you need the tool to do. He will create it based on your needs.
+
+Say in advance what the tool will let you decide. If you cannot name the filter you would write against its columns, you do not yet know what you are building.
+
+Once `tool-creator` is finished, it will report back the necessary tool info. You will need to verify the tool before using it. Let the `orchestrator` test it on **real data in the run_dir**, labeling the output_dir with a `verification` label. Order the following:
+
+1. Run it on a handful of designs and show the collected columns.
+2. Check an invariant against a number the tool did not compute — a length from a parent table, a residue identity at a known position, a count of raw result files.
+3. Confirm the trust metrics say the mapping was right.
+4. Confirm a deliberately bad input produces an error status, not a plausible number.
+
+Once its verified, you can start using it.
 
 ## Editing a tool
 
-The bundled tools are intentionally general, so most workflows need to bend one at some point. Prosapia allows you to fork and edit bundled tools. This also something that you may need and are allowed to do. If you see feel that a bundled tool is genuinely missing an important feature, don't hesitate to do edit it. Load the `editing-a-tool` skill to do it.
+The bundled tools are intentionally general, so most workflows need to bend one at some point. Prosapia lets you fork and edit them, and you are allowed to. Load the `editing-a-tool` skill.
+
+Prefer **editing** when the tool's premise already fits and it is missing a field or a flag. Prefer **a new tool** when the premise itself is different, like deriving completely new metrics. Widening a tool past its premise costs more than a new one, because every later reader inherits the wrong mental model along with the name.
 
 ## Judgment
 
@@ -66,12 +102,22 @@ The bundled tools are intentionally general, so most workflows need to bend one 
 - **Cost is real.** GPU containers cost money; say so before proposing a large fan-out, and prefer a cheap screen before an expensive prediction.
 - **Failures are information.** If the orchestrator reports failed tasks, ask for the `.err` tail before rerunning. Don't rerun blind.
 - **Don't invent numbers.** If you haven't seen the table, ask for it.
+- **For any number that gates a spend, demand the check that would have failed.** Don't ask "is the template right?" — ask for the `_entity_poly_seq` length per entity, the chain-mapping RMSD per permutation, the row arithmetic. *Measured:* a template passed chain IDs, residue counts, byte-identical sequences, bit-identical coordinates and correct geometry while declaring 49 residues for its 41-residue chains — a phantom +8 shift that only an explicit count caught, and that would have silently displaced every residue index downstream.
+- **Verify shape independently of the table.** `Collected N row(s)` is not proof. Count the raw per-design result files and check an invariant that must hold (chain counts, lengths, arithmetic). This has caught silent corruption that every status column reported as success.
+- **Say in advance what a new measurement would change.** Before building a tool or extracting a metric, write down the result that would make it worth having. *Measured:* per-pair ipTM was extracted on the theory it would re-rank a shortlist; it correlated +0.883 with the diluted number it replaced and was *worse* against `bridge_ratio`. The extraction was still worth it, but for a finding nobody predicted — not the one that justified it.
+- **State your expectation before the numbers arrive**, so it can be falsified. A wrong prediction is more informative than a right one, and both are cheap.
+- **Record the campaign, not just the tools.** Skills accumulate tool knowledge; nothing accumulates scientific knowledge unless you write it down. At the end of a campaign write a report — target facts, decisions and why, results, traps found with their signatures, known gaps — so the next session does not re-derive it. See `campaigns/`.
 
 ## What not to do
 
 - Don't build probe containers to validate a spec. Load the skill, read the source, or let the task script's prevalidation fail cheaply.
 
 # Binder design guidelines
+
+**Load the `binder-campaign` skill before starting a binder campaign, and again before
+interpreting any interface number.** It holds the gate order, which tool answers which question,
+and what each metric is blind to — with the measured examples behind each rule. What follows here
+is the short form.
 
 ## First steps
 
@@ -81,13 +127,33 @@ When designing a binder against a specific target it is very important to follow
 
 2. Define the bindable target before choosing an epitope. Trim the target to the domain a binder can actually reach (soluble/periplasmic), rather than keeping the full chain and filtering hotspots. Delete the decoy surface; don't just avoid it.
 
-3. Choose a pool of potential epitopes and present them to the user with your reasoning on how you chose them. Let the user decide which ones to go for. Allow multiple options.
+3. **Cutting the target manufactures new decoy surface. Cap it.** Deleting a membrane belt, or slicing two protomers out of an oligomer, exposes faces that do not exist in the real molecule — and a predictor will dock to them exactly as readily as to the real ones. Pad the design target with the flanking chains, and check any cut backbone terminus is far from the chosen epitope.
+
+4. **Check the remaining domain still holds together** before designing against it. Count heavy-atom contacts and backbone H-bonds between the segments you kept, and compare against what you removed. If the retained parts only pack through the piece you deleted, your target is a fiction.
+
+5. Choose a pool of potential epitopes and present them to the user with your reasoning on how you chose them. Let the user decide which ones to go for. Allow multiple options.
+   - Work out the **approach vector** first. A radially-exposed-side-chain test is the wrong criterion for a flat-bottomed particle where the accessible face points along the symmetry axis. Say which direction a binder arrives from.
+   - Reject patches on physical grounds even when they score well: too close to the membrane plane for the binder's own footprint, or overlapping a surface created by your own trimming.
+   - Check the epitope fits the binder: patch longest dimension vs. binder size, and the arc/width of target available before the next symmetry-related site.
 
 ## Be careful
 
-- Judge a binder on fold and pose, separately. Binder-only RMSD answers "did it fold"; binder RMSD in the target frame answers "did it stay". A design can pass the first at 1 Å and fail the second by 90 Å.
+- **Gate on target geometry before reading any interface number.** Under a forced template this is the *first* gate, ahead of fold and pose. Superpose the predicted target chains onto the template and measure; exclude rows where the target did not land.
 
-- When designing a binder against two targets: never use whole-complex metrics for a binder. iptm and multimer TM-score are diluted by the native target interface — and by a forced template we imposed ourselves. Use per-chain BSA, bridge_ratio, hotspot recall, and pose RMSD.
+- **The broken predictions produce the best-looking numbers.** *Measured:* every design in a batch with `hotspot_recall` 1.00 and a 2200–2800 Å² interface was one whose target had collapsed — binders engulfed by a target folding around them (`n_clash` 32, 374, 388). Ranked on interface size or hotspot recall without the geometry gate, the five worst designs would have been picked as the five best. **A large interface is evidence of a broken prediction until the target RMSD says otherwise.**
+
+- Judge a binder on fold and pose, separately. Binder-only RMSD answers "did it fold"; binder RMSD in the target frame answers "did it stay". A design can pass the first at 1 Å and fail the second by 90 Å. *Measured:* the best self-consistency in a campaign (TM 0.971, RMSD 0.58 Å) was also its most impossible pose. Fold quality carries no information about pose quality.
+
+- When designing a binder against two epitopes in the same pose: never use whole-complex metrics for a binder. iptm and multimer TM-score are diluted by the native target interface — and by a forced template we imposed ourselves. Use per-chain BSA, bridge_ratio, hotspot recall, and pose RMSD.
+- The dilution is arithmetic: with N chains, `iptm` averages N(N−1)/2 pairs, of which all but a few are template-forced target–target. *Measured on a 9-chain complex:* `confidence_score` correlated **r = −0.896** with target RMSD and separated landed from distorted perfectly — then correlated **−0.250** with binder-interface ipTM among the rows that landed. **Use it as a gate, then stop using it.**
+- Boltz writes `pair_chains_iptm` and `chains_ptm` per prediction. The binder-vs-target pair is the honest number. Note it is whole-chain vs whole-chain, so still diluted when a binder touches a small patch of a large chain.
+- **The cheapest real interface signal is the binder's own pLDDT alone vs. in complex.** A genuine interface raises it. *Measured:* all 27 designs **lost** 7.5–23.3 points on docking — a confidently-folded domain the predictor is confidently unsure where to put.
+
+- **Verify chain mappings empirically, never by inference.** Generators renumber and relabel chains. Superpose over candidate permutations and report the RMSDs — the right answer separates by orders of magnitude (0.050 Å vs ≥16 Å). The same applies to residue numbering: check a sequence-identity fraction and a numbering offset before trusting any RMSD, BSA or hotspot number.
+
+- **MSA policy differs per chain in a binder complex.** A de-novo binder correctly has no MSA. A natural target usually should have one — denying it weakens target assembly *and* interface confidence, and you will misread the result as bad designs. Decide this deliberately and say what you chose.
+
+- **Rosetta energies from a trimmed target are relative only.** Every cut creates artificial termini with charges the real protein lacks. Rank within a batch; never quote an absolute total score.
 
 
 

@@ -13,6 +13,7 @@ A tool carries **no orchestration of its own**. It is a declarative `Tool` descr
 
 - Drivers & types: `src/prosapia/core/tool.py`, `base_run.py`, `base_collect.py`, `naming.py`, `base_parser.py`, `data_manager.py`, `tool_registry.py`.
 - Executors: `src/prosapia/core/executors/` (`slurm.py`, `modal.py`, `volume_path`).
+- The `{expr}` mini-language (no docs page exists): `src/prosapia/utils/expr.py`, `src/prosapia/utils/positions.py`.
 - CLI dispatcher: `src/prosapia/cli/cli.py` (builds `sapia {run,collect} <tool>`).
 - Task prelude sourced by every `.sh` task script: `src/prosapia/core/scripts/sapia_task_prelude.sh`.
 - User docs: `docs/writing-a-tool.md`, `docs/writing-a-build-manifest-function.md`, `docs/writing-a-collect-function.md`, `docs/running-on-modal.md`.
@@ -140,6 +141,67 @@ def add_run_proteinmpnn_args(parser: ArgumentParser) -> None:
 
 `run_dir`, `-t/--table`, `--force`, `-i/--input-column`, `-l/--dir-label`, `-f/--filter`, `-s/--script`, `-e/--executor`, `--modal-gpu`, the resource flags (`-g/--gpus-per-task`, `-c/--cpus-per-task`, `-T/--time`, `--mem`, `-C/--max-concurrent`), the SLURM flags (`-a/--account`, `-p/--partitions`, `--max-gpu-fraction`), and (for create tools) `--table-label` are all supplied by the base parser — don't redeclare them.
 
+### The `{expr}` mini-language — per-design values inside a flag
+
+A flag is **one string for the whole run**, but designs differ: the motif ends at a different residue in every row. The mini-language closes that gap, so a user writes one flag that means something different per design instead of splitting the run or writing a filter per value.
+
+Source (there is **no `docs/` page** for this — the modules are the reference): `src/prosapia/utils/expr.py` and `src/prosapia/utils/positions.py`.
+
+**It is opt-in per flag.** Nothing resolves unless your builder calls the resolver. Two layers, both exported from `prosapia.utils`:
+
+| Layer | Call | Returns | Grammar |
+| --- | --- | --- | --- |
+| Expression | `resolve_expr(expr, lookup, name)` | `int` | One expression, no braces |
+| Template | `resolve_template(s, lookup, name)` | `str` | Substitutes every `{expr}` island in `s`; text outside braces is **left verbatim** |
+| Positions | `parse_positions(spec, lookup, name, lengths=…)` | `list[list[int]]` | Template first, then `/` chain breaks, `,` fragments, `start:end` inclusive, optional outer `[…]` |
+
+#### The division of labour — this is the whole idea
+
+> **Outside the braces is your tool's native language, and prosapia never parses it. Inside the braces is prosapia's.**
+
+RFdiffusion contigs, ProteinMPNN position lists, a YAML spec field — prosapia passes them through untouched and only substitutes the islands. So **never invent a syntax for "take this number from the table."** Accept the wrapped program's own syntax verbatim and run it through `resolve_template`:
+
+```python
+from prosapia.utils import resolve_template
+
+for name in ctx.ready.index:
+    contig = resolve_template(ctx.args.contigs, ctx.lookup, name)
+    # 'A1-{motif_end},30'  ->  'A1-131,30' for this design
+```
+
+`ctx.lookup` is already on `ManifestCtx`; that call is the entire integration.
+
+#### What the grammar allows
+
+Integer literals, **bare column names**, and `+ - * //`. Nothing else — `_safe_eval` walks the AST and rejects every other node type.
+
+```
+{motif_end}                 # column, resolved up the lineage for this design
+{motif_end - 1}             # arithmetic on it
+{binder_len // 2}
+{n_res * 2 + 10}
+```
+
+- **`/` is not an operator.** `ast.Div` is absent from `_BIN_OPS`, so `{a/b}` raises. Use `//`. (True division would not return an int, and `/` is already the chain separator in the position language.)
+- **Integers only.** A column resolving to a non-integral float raises `column 'x'=0.93 is not an integer` — `{boltz_plddt}` will never work. This is a geometry/indexing language, not a general templating engine.
+- **Lineage walk, nearest non-null wins.** `lookup` reads the column on this row, and on a miss or a null follows `parent_name`/`parent_table` upward (with a cycle guard). A child's own value shadows its parent's.
+
+#### Resolve at manifest-build time, never in the task script
+
+The manifest carries **already-resolved** values. The task script gets a literal contig and a literal position list; it has no table, no lineage and no resolver. A per-row failure therefore raises during the build, **before anything is submitted** — the cheap place to fail. Let it.
+
+#### Structured flags: walk the tree
+
+For a flag that is a YAML/JSON file rather than a string, resolve recursively — strings and dict *keys* go through `resolve_template`, containers are walked, and `int`/`float`/`bool`/`None` pass through so native types survive. Copy `_resolve_tree` in `run_rfdiffusion3.py:249`; that is what lets `--extra-spec` carry `{expr}` in its values.
+
+#### Traps
+
+- **A root `create` has no lineage.** `ctx.df` is empty, there is no row to resolve against, so `{expr}` cannot work. Root runs must use literal values — the rfd3 skill states this as "`{expr}` placeholders … need `-t`".
+- **Braces collide with native syntax that uses them.** Any YAML/JSON flow mapping in a flag value will be read as an island and fail to parse as an expression. Avoid literal braces in `--extra-spec`, or your users will hit a confusing error.
+- **An unresolvable column is a per-row `ValueError` naming the design.** Decide deliberately whether your builder lets it abort the run or skips that row — silently skipping means a user sees a smaller `Submitting N designs` than they expected, which reads like a filter problem rather than a typo.
+- **The position parser's error is migration-friendly on purpose** — a bare column name outside braces reports `wrap table column expressions in braces, e.g. '{motif_end}'` rather than a raw `int()` failure. Match that tone if you write your own parser.
+- **Positions are 1-indexed per chain, order preserved, not de-duplicated.** Open-ended ranges (`10:`, `:50`, `:`) need a `lengths` argument; without one they raise. ProteinMPNN never passes lengths, so open ranges simply don't work there.
+
 ## The `.sh` task script
 
 Source the shared prelude, which loads `.env` and exports `MANIFEST` (`$1`), `OUT_DIR` (`$2`), `SAPIA_SCHEDULER` (`slurm` | `modal`), `SAPIA_TASK_ID` (this task's 1-based index) and `SAPIA_LINE` (this task's manifest line — cut your own fields from it), then call `sapia_activate SAPIA_ACTIVATE_<NAME>` (a no-op under Modal, where the image provides the environment). Manifests are **tab-separated**. The same script runs under every executor, so use `SAPIA_TASK_ID`, never `SLURM_ARRAY_TASK_ID`. The executor also exports `SAPIA_TOOL_DIR` (the dir holding the `.sh`), so address sibling files like a worker as `"${SAPIA_TOOL_DIR:?}/<name>_worker.py"`.
@@ -244,7 +306,7 @@ The run reserves the table (`create`) or targets it (`update`); collect only fil
 ## Checklist for a new tool `<name>`
 
 1. `mkdir src/prosapia/tools/<name>/`.
-2. `run_<name>.py`: `build_<name>_manifest(ctx)` using `ctx.ready`; optional args subclass + `add_run_<name>_args`. No `__main__`.
+2. `run_<name>.py`: `build_<name>_manifest(ctx)` using `ctx.ready`; optional args subclass + `add_run_<name>_args`. No `__main__`. For any flag naming a residue, length or index, pass it through `resolve_template(s, ctx.lookup, name)` so `{expr}` works — accept the wrapped program's native syntax, don't invent your own.
 3. `collect_<name>.py`: `collect_<name>(ctx)` returning a per-design `one(design)` that yields `Collected(...)`; honour the `create`/`update` contract. No `__main__`. See `docs/writing-a-collect-function.md`.
 4. `<name>.sh`: `source "${SAPIA_PRELUDE:?}"`, `sapia_activate SAPIA_ACTIVATE_<NAME>`, cut fields from `$SAPIA_LINE`, run the program, write per-design output; set `#SBATCH` resources (and set `ctx.args.gpus_per_task = 0` in the builder for CPU-only tools).
 5. `modal_image.py` if the tool should run on Modal; wrap manifest paths with `volume_path`.
