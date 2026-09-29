@@ -1,6 +1,6 @@
 ---
 name: boltz
-description: How to run the boltz structure-prediction tool on Modal — flags, its weight cache Volume, timing, and the confidence columns it writes. Load before composing a boltz run.
+description: How to run the boltz structure-prediction tool on Modal — flags, its weight cache Volume, timing, and the confidence columns it writes. Also covers binder complexes: why iptm is diluted by chain count, where the binder-specific pair_chains_iptm/chains_ptm/PAE actually live, per-chain MSA policy, the forced-template schema and its silent failure modes (_entity_poly_seq, label_asym_id, sequence-search fallback), and the shard-count traps. Load before composing a boltz run, and before interpreting any confidence number from a complex.
 ---
 
 # boltz
@@ -50,3 +50,118 @@ Reading them: `confidence_score` and `complex_plddt` around 0.9+ is a confident 
 ##  Important notes
 
 - Forced templates steer; they don't constrain fully (e.g.: `force: true, threshold: 2.0`). Use the flag anyway but always verify independently and exclude rows where the target didn't land.
+
+## Binder complexes: what the collected confidence does and does not mean
+
+**`iptm` is diluted by chain count.** With N protein chains it averages N(N−1)/2 interchain
+pairs. In a binder complex all but a handful of those are target–target — and if you supplied a
+template, they are pairs *you forced*. A 9-chain complex has 36 pairs of which **35 are
+target–target and 1 is binder–target**, so the collected `iptm` is overwhelmingly a statement
+about template reproduction.
+
+Measured on a 27-design binder campaign against a trimmed 4-protomer target:
+
+| | |
+| --- | --- |
+| `confidence_score` vs **target** RMSD | **r = −0.896** — a perfect separator (landed 0.706–0.736, distorted 0.542–0.634, empty band) |
+| `confidence_score` vs **binder-interface** ipTM, among rows that landed | **rho = −0.250** |
+
+So: **use `confidence_score` as a gate for "did the target assemble", then stop using it.** It
+carries no binder signal once past that gate. The highest-`confidence_score` design in that set
+also had the highest target pLDDT and near-bottom binder-interface confidence.
+
+### The binder-specific numbers, and where to get them
+
+Not collected by prosapia. They are in the per-prediction confidence JSON at
+`<out_dir>/boltz_results_shard_*/predictions/<name>/confidence_<name>_model_0.json`:
+
+- `chains_ptm` — `{"0": …, "1": …}`, **chain index is positional from the input YAML**, so the
+  binder is the last index if `mkcomplex` prepended the target.
+- `pair_chains_iptm` — full N×N. **Not symmetric** (observed max asymmetry 0.079); symmetrise
+  by averaging both directions. The diagonal just repeats `chains_ptm`.
+
+Also on disk per prediction: `plddt_<name>_model_0.npz` (`plddt`, 0–1, per token) and
+`pae_<name>_model_0.npz` (`pae`, n_res × n_res). The cif's `B_iso_or_equiv` carries the same
+pLDDT on a 0–100 scale (agrees to 7e-5). There is **no PAE or per-residue data in the JSON**.
+
+Caveat: `pair_chains_iptm` is whole-chain vs whole-chain, so a binder touching a small patch of
+a large chain is still diluted. An **interface-restricted PAE** (contacting residue pairs only,
+from the npz) is the sharper metric and is not provided by anything here.
+
+### The cheapest honest interface signal
+
+**Compare the binder's mean pLDDT alone vs. in complex.** A real interface raises it. Measured:
+all 27 designs *lost* 7.5–23.3 points (mean 13.7) on docking — the signature of a
+confidently-folded domain the predictor is confidently unsure where to place. This was more
+informative than any ipTM flavour.
+
+Rough reference points: a believed interface is ~0.5–0.6 binder-target ipTM and < 10 Å interface
+PAE. The best in that campaign were 0.357 and 19.5 Å.
+
+## MSA policy differs per chain in a binder complex
+
+`--use-msa-server` is off by default and the runs above used `msa: empty` everywhere. For a
+**de-novo binder that is correct** — no MSA exists. For a **natural target it is not**: denying
+it an MSA weakens target assembly *and* interface confidence, and the result reads as bad
+designs. Decide deliberately, and say which you chose when reporting. (It calls an external
+server, so ask before enabling.)
+
+## Templates
+
+**Do not hand-write the CIF.** `tools/_utils/boltz_template.py` builds it and the matching YAML,
+and verifies every trap below by re-reading the written file. It is not a sapia tool — run it with
+the workstation's python:
+
+```bash
+sapia modal-shell --cmd 'python $PROSAPIA_TOOLS_DIR/_utils/boltz_template.py \
+    --fetch 7OJG --out /runs/inputs/7ojg_tmpl_kabc.cif \
+    --chains K,A,B,C --rename-to A,B,C,D --residues K:19-59+107-155 \
+    --yaml /runs/inputs/7ojg_tmpl_kabc.yaml'
+```
+
+`--chains` picks source chains in order, `--rename-to` renames positionally, `--residues` trims
+per **source** chain (`K:19-59+107-155`), `--predict-chains` sets the YAML's `chain_id` when the
+prediction's chain IDs differ from the template's. `--check <file> --expect-chains A,B,C` verifies
+a CIF from anywhere and exits non-zero. Outputs go under `/runs/` — each `modal-shell` call is a
+fresh container. `--fetch` downloads from RCSB inside the container, which is how inputs get
+staged here (`modal volume put` is unreliable on this network).
+
+The rest of this section is why that script exists — read it before overriding any of its choices.
+
+`--template-yaml` is spliced **verbatim** at column 0 after the `sequences:` block, so the file
+must start at column 0. Schema read from `boltz/data/parse/schema.py`:
+
+```yaml
+templates:
+  - cif: /runs/inputs/target.cif
+    chain_id: [A, B, C, D]      # prediction chains
+    template_id: [A, B, C, D]   # template chains
+    force: true
+    threshold: 2.0              # mandatory when force is true
+```
+
+- **Give `chain_id` AND `template_id`, equal length.** Then Boltz zips them positionally — an
+  explicit 1:1 map. Omit either and it falls back to `get_template_records_from_search`, which
+  scores sequence alignments to pick chains. **With sequence-identical chains (any homo-oligomer)
+  that can silently assign the wrong template chain and destroy the geometry.**
+- **Boltz names template chains by `label_asym_id`/subchain, not auth chain ID.** A CIF written
+  by gemmi defaults to `Axp`, `Bxp`, … and `template_id: [A, …]` then raises *"Template chain A
+  is not one of the protein chains"*. Set `label_asym_id == auth_asym_id`.
+- **`_entity_poly_seq` must equal the modelled residue count for every entity.** `parse_polymer`
+  uses it as the token list, and entries absent from the model still **consume token indices** —
+  so a too-long declaration silently shifts every residue index downstream. A common way to get
+  this wrong: copied gemmi residues keep their source `subchain` label, `setup_entities()` then
+  merges two chains into one entity and takes `full_sequence` from whichever came first. **Count
+  the `_entity_poly_seq.mon_id` rows per entity and check them before spending.**
+- Do not template the binder chain.
+- Forced templates steer, they do not constrain. **Always superpose the predicted target chains
+  back onto the template and exclude rows where the target did not land.** In one batch only
+  9 of 27 landed, and the distorted ones produced the largest interfaces and the best hotspot
+  recall in the set.
+
+## Two operational traps
+
+- **`Submitting N designs` counts SHARDS**, not designs (`--shard-size`, default 10). Two designs
+  print `Submitting 1 designs`. Count `<out_dir>/boltz_inputs/*.yml` instead.
+- **`boltz_shards/` is never cleared** (`mkdir(exist_ok=True)`). A rerun in a run_dir that already
+  held a pilot will re-predict rows you meant to skip. Check the staged inputs first.

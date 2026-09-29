@@ -7,6 +7,12 @@ description: The prosapia workbench model and the sapia CLI contract — run_dir
 
 `prosapia` (CLI `sapia`) is a **workbench, not a pipeline**. There is no fixed order of steps: there is one tabular data format and tools that consume and produce it. Your job is to compose one step correctly, run it, and report what landed in the table.
 
+To define how tools interact with the data interface, prosapia establishes the following principles:
+
+1. A design is a row, a generation of designs is a table.
+
+2. When a protein diverges in sequence or structure, it is no longer the same protein but a child of a parent — therefore it needs a new table.
+
 Authoritative references, all in the sibling checkout `../prosapia` (read them when this page doesn't answer the question):
 
 | Question | Page |
@@ -34,11 +40,8 @@ run_dir/
     └── rfdiffusion3/  = run_dir/<table>/<leaf>/
 ```
 
-- **A design is a row; a generation of designs is a table.** Each tool contributes columns
-  to a row, never files to another tool.
-- **Columns are leaf-prefixed**: the leaf is `<tool>`, or `<tool>_<dir_label>` if you
-  passed `-l`. Every tool writes `<leaf>_status` and usually `<leaf>_path`.
-  **`<leaf>_status == "OK"` is the only proof a design succeeded.**
+- **A design is a row; a generation of designs is a table.** Each tool contributes columns to a row, never files to another tool.
+- **Columns are leaf-prefixed**: the leaf is `<tool>`, or `<tool>_<dir_label>` if you passed `-l`. Every tool writes `<leaf>_status` and usually `<leaf>_path`. **`<leaf>_status == "OK"` is the only proof a design succeeded.**
 - **Row lineage** lives in `parent_name`, `parent_table`, `gen`. A root table's
   `parent_table` is the sentinel `root`.
 - Only `sapia new_run` mints a run_dir. No tool ever does.
@@ -53,8 +56,7 @@ sapia run     <tool> <run_dir> [-t <table>] [flags]
 sapia collect <tool> <run_dir> -t <table> [-l <dir_label>]
 ```
 
-**There is no verb for reading a table.** Read TSVs with shell or pandas inside the
-workstation (recipes below).
+**There is no verb for reading a table.** Read TSVs with shell or pandas inside the workstation (recipes below).
 
 ## Two phases, and where output lands
 
