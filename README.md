@@ -25,7 +25,12 @@ uv run modal setup
 uv run sapia modal-shell --cmd 'sapia run --help'   # should list the tools
 ```
 
-The Volume names already in `.env` (`SAPIA_MODAL_*`) are correct — keep them. Drop them and you silently get new **empty** Volumes instead of an error, and your first run fails on a missing checkpoint.
+Set your personal volume values in `.env`:
+```bash
+SAPIA_MODAL_RUNS_VOLUME="sapia-runs-<your-name>"
+```
+
+If you don't do this, your results will appear in mine.
 
 **3. Set up the VIB DataCore** — skip if you only use Modal
 
