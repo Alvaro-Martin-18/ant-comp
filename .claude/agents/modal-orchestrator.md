@@ -56,6 +56,22 @@ So N is not a usable guard against a filter failing open or shut. **Count the st
 
 **Staging dirs are not cleared between runs.** `build_boltz_manifest` does `mkdir(exist_ok=True)` on `boltz_shards/` and leaves whatever was there. A rerun in a run_dir that already held a pilot will re-predict rows you meant to skip. Check the staged inputs are exactly the designs you intended before walking away.
 
+**Rerunning after a FAILED attempt: delete the tool's output folder first.** This is the easiest fix for the whole class of overwrite problems, and it is not optional when anything about the run changed.
+
+```bash
+sapia modal-shell --cmd 'rm -rf <run_dir>/<table>/<leaf>'
+```
+
+Three reasons, each of which has bitten this workspace:
+
+- **Stale `.exit` files persist and read as status.** A rerun reuses the log dir, so a previous attempt's `.exit` sits there looking like a completed task. You can conclude a run succeeded when it never ran.
+- **Different sharding conflicts.** Shard and task files are named by index (`shard_0.json`, `task_0.tsv`). Rerun with a different `--shard-size`, `--designs-per-task`, filter or design count and the new shards overwrite *some* of the old ones while orphans survive — leaving a directory that is a silent mix of two runs.
+- **Stale staged inputs get re-processed**, as above.
+
+Delete only `<run_dir>/<table>/<leaf>` — the tool's own output folder. **Never** delete the run_dir, `_registry.tsv`, or a table `.tsv`.
+
+**The exception:** a partially-successful run you are deliberately resuming. Re-running *without* `--force` resubmits only the non-`OK` rows, and that is the documented recovery for the blank-manifest failure. There, keeping the directory is the point — delete it and you throw away good rows. The rule is: **failed attempt → delete; partial success you are topping up → keep and rerun without `--force`.** If you are unsure which you have, report the state and ask rather than deleting.
+
 **CPU-only tools need `-g 0`.** `--gpus-per-task` defaults to 1, and a run with a GPU request but no GPU type fails with `--gpus-per-task > 0 but no GPU type`.
 
 ### 2. Wait

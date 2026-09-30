@@ -168,6 +168,22 @@ Submitted batch job 123456
 - **N counts manifest rows, not designs**, for tools that bin-pack (`boltz` shards, `proteinmpnn` parameter groups, `cms` chunks). **Count the staged input files** (`<out_dir>/boltz_inputs/*.yml`, `grp_*/inputs/*.pdb`, `cms_tasks/task_*.tsv`) and report that number.
 - **Staging dirs are not cleared between runs.** Check the staged inputs are exactly the designs you intended.
 
+**Rerunning after a FAILED attempt: delete the tool's output folder first.** This is the easiest fix for the whole class of overwrite problems, and it is not optional when anything about the run changed.
+
+```bash
+timeout 120 ssh -o BatchMode=yes -o ConnectTimeout=20 -x "$SAPIA_VIB_HOST" \
+  "rm -rf $SAPIA_VIB_WORKSPACE/<run_dir>/<table>/<leaf>"
+```
+
+Two reasons, both of which apply here even though SLURM writes no `.exit` files:
+
+- **Different sharding conflicts.** Shard and task files are named by index (`shard_0.json`, `task_0.tsv`). Rerun with a different `--shard-size`, `--designs-per-task`, filter or design count and the new shards overwrite *some* of the old ones while orphans survive — a directory that is a silent mix of two runs.
+- **Stale logs mislead.** Log files are named `<script>_<jobid>_<taskidx>.out`, so a rerun's logs sit **beside** the failed attempt's rather than replacing them. Reading the wrong job's `.err` while diagnosing is easy and expensive. If you keep the directory for any reason, always match on the job ID you just submitted.
+
+Delete only `<run_dir>/<table>/<leaf>` — the tool's own output folder. **Never** delete the run_dir, `_registry.tsv`, or a table `.tsv`. Note run_dirs here are absolute under `$SAPIA_VIB_WORKSPACE/outputs`, and this is shared group storage: double-check the path before an `rm -rf`, and never touch another user's directories.
+
+**The exception:** a partially-successful run you are deliberately resuming. Re-running *without* `--force` resubmits only the non-`OK` rows. There, keeping the directory is the point — delete it and you throw away good rows. The rule is: **failed attempt → delete; partial success you are topping up → keep and rerun without `--force`.** If you are unsure which you have, report the state and ask rather than deleting.
+
 ### 2. Wait
 
 Unlike Modal, **SLURM tasks write no `.exit` files.** The scheduler is the source of truth for state, and the log dir for evidence. Per task, in `<Logs>`:
