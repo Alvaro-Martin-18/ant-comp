@@ -280,6 +280,14 @@ sapia run mkcomplex <run_dir> -t table1_ph -f /runs/filters/ph_switch.py
 much more negative is "good" is **not calibrated** — the manuscript ranks within a
 campaign, and so should you.
 
+## Companion documents
+
+| Document | For |
+| --- | --- |
+| `docs/protonpottsmpnn-modal-guide.md` | the Slack-shareable how-to: quickstart, expected outputs, reading the table |
+| `docs/protonpottsmpnn-build-notes.md` | why it is built this way, what was measured, known gaps. **Read this if asked "how does it work" or "why this design".** |
+| `/runs/tests/protonpottsmpnn/` (Volume) | the PD-L1 test input, `seed_table0.py`, `ph_switch.py` |
+
 ## Verified end to end
 
 Run on the repo's own `inference/examples/pdl1_seed_binder.pdb` (PD-L1 seed binder,
