@@ -25,6 +25,7 @@ Every tool leaf-prefixes its columns and writes `<leaf>_status`; `OK` is the onl
 | **rfdiffusion3** | "Give me backbones." De novo, or conditioned on an input PDB (motif, binder against a target). | `pdb_path`; no `-t` = root run into `table0` | `path`, `iteration`, `rfd3_batch`, `rfd3_model`, `rfd3_ca_rmsd_to_input`, per-chain length | `rfdiffusion3` |
 | **proteinmpnn** | "What sequence folds this backbone?" | `rfdiffusion_path` ← **wrong for rfd3, pass `-i rfdiffusion3_path`** | `sequence`, `score` (lower better), `seq_recovery`; rows `<parent>_f1…` | `proteinmpnn` |
 | **atomium** | Same question, private noise-conditioned model. Use to diversify against MPNN. | `rfdiffusion3_path` | `sequence`, `sample`, `temperature`, `seq_rec`; rows `<parent>_a1…`. **No score column — you cannot rank the way MPNN allows.** | `atomium` |
+| **protonpottsmpnn** | "Give me a **pH-switchable** version of this binder." Pins protonated centres (HIS-P/ASP-P/GLU-P) and redesigns around them, one design per stability-vs-selectivity λ. | `rfdiffusion3_path` (a binder+target **complex**) | `sequence`, `extended_tokens`, `potts_energy`, `selective_energy`, `global_dh`, `combined_lambda`, `pareto`, `centers`, `center_seqpos`, `n_centers`, `centers_verified`, `resnum_offset`, `n_mut`, `seq_rec`, `binder_len`, `n_designable`, `binder_chain`, `seed_source`; rows `<parent>_p0…`. **Energies compare only WITHIN one backbone, and are not bitwise reproducible across backends.** | `protonpottsmpnn` |
 | **bindcraft2** | "Give me binders against this target" — the *whole* campaign in one step: AF2 hallucination + MPNN + refold + filter, looping until enough are accepted. **`--trajectory-only` stops it at backbones**, to redesign with `atomium`/`proteinmpnn` instead. | `pdb_path` (name the real column); no `-t` = root run from `--target-pdb` / `--shipped-target` | `sequence`, `i_pDAE`, `i_pTM`, `i_pAE`, `pLDDT`, `Interface_Residues`, `Interface_BuriedArea`, `Hotspot_Contact_Fraction`, `Binder_Length`, `rank`, `outcome`, `failed_filters`, `path` (**the complex**). **One task = one campaign; the row count is unknown until collect.** | `bindcraft2` |
 
 ### Prepare an input — `update`, cheap, no GPU
@@ -58,6 +59,7 @@ Every tool leaf-prefixes its columns and writes `<leaf>_status`; `OK` is the onl
 | Give me backbones | `rfdiffusion3` |
 | Give me binders against this target | `bindcraft2` (the whole campaign in one step), or `rfdiffusion3` binder mode if you want to compose the chain yourself |
 | What sequence folds this | `proteinmpnn`, or `atomium` for diversity |
+| Make it bind at one pH and let go at another | `protonpottsmpnn` (needs a binder+target complex; you must supply `vendor/hbplus.tar.gz` yourself — licence-restricted, never committed) |
 | What does this sequence fold to | `boltz` (`alphafold3` / `colabfold` for a second opinion) |
 | Did it fold back to its designed backbone | `boltz` → `usalign` (`--col-a` prediction, `--col-b` parent backbone) |
 | Did the binder *stay put*, not just fold | `chainsel` the binder out, then `usalign` **in the target frame** — a separate question from fold, see `binder-campaign` |
@@ -77,6 +79,8 @@ The commonest silent failure in this workspace is a tool reading the wrong colum
 | --- | --- | --- |
 | rfdiffusion3 | proteinmpnn / atomium | `-i rfdiffusion3_path` — the default is `rfdiffusion_path` (no 3) and matches nothing |
 | atomium | boltz / af3 | `-i atomium_sequence` |
+| protonpottsmpnn | boltz / af3 | `-i protonpottsmpnn_sequence` — it is the **binder chain alone**, so `mkcomplex` still belongs in between on a binder table |
+| proteinmpnn / atomium | protonpottsmpnn | `--seed-column <that>_sequence` to pH-redesign an existing sequence instead of the native one; `-i` still names the **structure** |
 | bindcraft2 | boltz / af3 | `-i bindcraft2_sequence` — an **independent** check; bindcraft2's own scores come from the AF2 that designed the binder |
 | bindcraft2 `--trajectory-only` | atomium / proteinmpnn | `-i bindcraft2_traj_path` (use `-l traj`, or the leaf collides with a full campaign's). The backbone is the **complex** — pass `--chains-to-design <binder chain>`, and filter on `bindcraft2_traj_completed` |
 | bindcraft2 | chainsel / cms / usalign | `-i bindcraft2_path` — it is the **complex**, so `chainsel` the binder out first |
@@ -103,5 +107,5 @@ Two structure columns exist for every predicted design: the **backbone** it was 
 
 ## One operational trap
 
-- Custom tools (`atomium`, `bindcraft2`, `chainsel`, `cms`, `mkcomplex`, `ringfit`) live in this project's `tools/` and are baked into the workstation image from the **local working directory**. If `sapia modal-shell` is launched from somewhere other than the project root, they are simply absent from `sapia run --help` — the built-ins still work, so it looks like the custom tool was never written rather than like a path problem.
+- Custom tools (`atomium`, `bindcraft2`, `chainsel`, `cms`, `mkcomplex`, `protonpottsmpnn`, `ringfit`) live in this project's `tools/` and are baked into the workstation image from the **local working directory**. If `sapia modal-shell` is launched from somewhere other than the project root, they are simply absent from `sapia run --help` — the built-ins still work, so it looks like the custom tool was never written rather than like a path problem.
 - **No tool names its output table**, and none of them will reorder your campaign. You compose.
